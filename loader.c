@@ -77,7 +77,7 @@ int ParseCODE(unsigned short int addr, unsigned short int n,
 		}
 		data = (((data >> 8) & 0x00ff) | ((data << 8) & 0xff00));
 		prog[i] = data;
-        printf("0x%X\n", data);
+        printf("address: 0x%X   data: %d\n", addr+i, data);
 	}
 	memcpy(CPU->memory + addr, prog, n);
 	return 1;
@@ -95,7 +95,7 @@ int ParseDATA(unsigned short int addr, unsigned short int n,
 		}
 		data = (((data >> 8) & 0x00ff) | ((data << 8) & 0xff00));
 		prog[i] = data;
-        printf("%d\n", data);
+        printf("address: 0x%X   data: %d\n", addr+i, data);
 	}
 	memcpy(CPU->memory + addr, prog, n);
     
