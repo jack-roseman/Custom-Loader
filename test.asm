@@ -1,7 +1,3 @@
-.DATA
-.ADDR x2000
-.STRINGZ "hello"
-
 .CODE
 ADD R1, R0, R1
 MUL R2, R1, R1
@@ -10,3 +6,11 @@ DIV R1, R3, R2
 AND R1, R2, R3
 OR R1, R3, R2
 XOR R1, R3, R2
+
+.DATA
+.ADDR 0x4000
+.STRINGZ "There"
+.FILL #1
+.FILL #2
+.FILL #3
+.FILL #4
