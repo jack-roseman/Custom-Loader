@@ -8,9 +8,8 @@
 /*
  * Reset the machine state as Pennsim would do
  */
-void Reset(MachineState* CPU)
-{
-
+void Reset(MachineState* CPU) {
+	
 }
 
 

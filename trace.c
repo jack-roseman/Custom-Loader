@@ -13,7 +13,11 @@ int main(int argc, char** argv)
 		printf("Invalid argument to main(). Expected <./trace output_filename.txt input1_filename.obj ...>");
 		return 0;
 	}
-	printf("%s\n", argv[2]);
-	ReadObjectFile(argv[2], NULL);
+	printf("%s\n", argv[1]);
+	CPU = malloc(sizeof(CPU));
+	
+	ReadObjectFile(argv[1], CPU);
+    free(CPU->memory);
+	free(CPU);
     return 0;
 }

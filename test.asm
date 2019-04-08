@@ -1,4 +1,6 @@
 .DATA
+.ADDR x2000
+.STRINGZ "hello"
 
 .CODE
 ADD R1, R0, R1
