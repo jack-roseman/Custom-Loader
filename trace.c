@@ -11,12 +11,11 @@ int main(int argc, char** argv){
     int i;
     int j;
     char ext[5];
-    char* d;
-    FILE* out_txt_file;
+    FILE* out_txt_file = NULL;
     
 	if (argc == 1 || argc == 2) {
 		printf("Invalid argument to main(). Expected <./trace <filename>.txt <filename>.obj <filename>.obj...>\n");
-		return 0;
+		return -1;
 	}
     
     
@@ -29,10 +28,9 @@ int main(int argc, char** argv){
         return 0;
     }
     
-	CPU = (MachineState*) malloc(sizeof(CPU));
+	CPU = (MachineState*) malloc(sizeof(MachineState));
     //clear lc4 memory
     memset(CPU->memory, 0, sizeof(CPU->memory));
-    
     //make sure files end with .obj before reading
     for (i = 2; i < argc; i++) {
         for (j = 0; j < 4; j++) {
@@ -50,19 +48,27 @@ int main(int argc, char** argv){
     out_txt_file = (FILE*) malloc(sizeof(FILE));
     out_txt_file = fopen(argv[1], "w");
     //print out data at every address
-    for (i = 0; i < 6500; i++) {
+    for (i = 0; i < 65536; i++) {
         unsigned short int* mem = CPU->memory;
+        if (mem[i]){
             fprintf(out_txt_file, "address: %d%d%d%d%d contents: 0x%X\n", 
                (i / 10000) % 10 ,
                (i / 1000) % 10,
                (i / 100) % 10, 
                (i / 10) % 10 , 
                i % 10, mem[i]);
-        //}
+        }
+    }
+    
+    Reset(CPU);
+    ClearSignals(CPU);
+    j = 0;
+    while (j < 50) {
+        UpdateMachineState(CPU, out_txt_file);
+        j++;
     }
     
     fclose(out_txt_file);
-    
 	free(CPU);
     return 0;
 }

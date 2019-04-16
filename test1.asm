@@ -1,16 +1,23 @@
 .CODE
-.ADDR 0x0020
+.ADDR 0x0000
 FACTORIAL
-CONST R0, #7   ; A = 5
-AND R1, R0 #-1   ;; B = A, essentially copying R0 to R1
+CONST R0, #7   
+AND R1, R0 #-1   
 LOOP
- CMPI R0, #1     ; set NZP bits
- BRnz END        ; go to end if A <= 0
- ADD R0, R0, #-1 ; A = A - 1
- MUL R1, R1, R0   ; B = B * A
- BRnzp LOOP      ; go to LOOP
+ CMPI R0, #1     
+ BRnz END        
+ ADD R0, R0, #-1 
+ MUL R1, R1, R0   
+ BRnzp LOOP      
 END
 
 .DATA
 .ADDR 0x2000
 .STRINGZ "JACK"
+
+.OS
+.CODE
+.ADDR x8200
+.FALIGN
+CONST R7, #0
+RTI

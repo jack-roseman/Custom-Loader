@@ -11,5 +11,3 @@ int ParseCODE         (unsigned short int addr, unsigned short int n, FILE* in_b
 int ParseDATA         (unsigned short int addr, unsigned short int n, FILE* in_bin_file, MachineState* CPU);
 int ParseSYMBOL       (unsigned short int addr, unsigned short int n, FILE* in_bin_file, MachineState* CPU);
 int ParseFILENAME     (unsigned short int n, FILE* in_bin_file, MachineState* CPU);
-int ParseLINENUM      (unsigned short int addr, unsigned short int n, unsigned short int file_index,
-                       FILE* in_bin_file, MachineState* CPU);
