@@ -4,19 +4,36 @@
 
 #include "LC4.h"
 #include <stdio.h>
+#include <stdint.h>
+
+#define DEBUG 0
+
+//macros
+#define IMM4(I) (((I & 0xF) >> 3) % 2 == 1 ? (I & 0xF) - 16 : (I & 0xF))
+#define IMM5(I) (((I & 0x1F) >> 4) % 2 == 1 ? (I & 0x1F) - 32 : (I & 0x1F))
+#define IMM6(I) (((I & 0x3F) >> 5) % 2 == 1 ? (I & 0x3F) - 64 : (I & 0x3F))
+#define IMM7(I) (((I & 0x7F) >> 6) % 2 == 1 ? (I & 0x7F) - 128 : (I & 0x7F))
+#define IMM9(I) (((I & 0x1FF) >> 8) % 2 == 1 ? (I & 0x1FF) - 512 : (I & 0x1FF))
+#define IMM11(I) (((I & 0x7FF) >> 10) % 2 == 1 ? (I & 0x7FF) - 2048 : (I & 0x7FF))
+#define INSTR_11_9(I) ((I >> 9) & 0x7)
+#define INSTR_8_6(I) ((I >> 6) & 0x7)
+#define INSTR_5_3(I) ((I >> 3) & 0x7)
+#define INSTR_2_0(I) (I & 0x7)
 
 /*
  * Reset the machine state as Pennsim would do
  */
 void Reset(MachineState* CPU) {
-	CPU->PC = (unsigned short int) 0x8200;
-    CPU->PSR = (unsigned short int) 0x8002;
-    memset(CPU->R, (unsigned short int) 0x0000, 8);
+    CPU->PC = (uint16_t) 0x8200;
+    CPU->PSR = (uint16_t) 0x8002;
+    memset(CPU->R, (uint16_t) 0x0, 8);
+
+    //clear signals
     ClearSignals(CPU);
-    CPU->regInputVal = (unsigned short int) 0x0000;
-    CPU->NZPVal = (unsigned short int) 0x0000;
-    CPU->dmemAddr = (unsigned short int) 0x0000;
-    CPU->dmemValue = (unsigned short int) 0x0000;
+    CPU->regInputVal = (uint16_t) 0x0;
+    CPU->NZPVal = (uint16_t) 0x0;
+    CPU->dmemAddr = (uint16_t) 0x0;
+    CPU->dmemValue = (uint16_t) 0x0;
 }
 
 
@@ -24,12 +41,12 @@ void Reset(MachineState* CPU) {
  * Clear all of the control signals (set to 0)
  */
 void ClearSignals(MachineState* CPU) {
-    CPU->rsMux_CTL = (unsigned char) '0';
-    CPU->rtMux_CTL = (unsigned char) '0';
-    CPU->rdMux_CTL = (unsigned char) '0';
-    CPU->regFile_WE = (unsigned char) '0';
-    CPU->NZP_WE = (unsigned char) '0';
-    CPU->DATA_WE= (unsigned char) '0';
+    CPU->rsMux_CTL = (unsigned char) 0x0;
+    CPU->rtMux_CTL = (unsigned char) 0x0;
+    CPU->rdMux_CTL = (unsigned char) 0x0;
+    CPU->regFile_WE = (unsigned char) 0x0;
+    CPU->NZP_WE = (unsigned char) 0x0;
+    CPU->DATA_WE= (unsigned char) 0x0;
 }
 
 
@@ -37,7 +54,7 @@ void ClearSignals(MachineState* CPU) {
  * This function should write out the current state of the CPU to the file output.
  */
 void WriteOut(MachineState* CPU, FILE* output) {
-    
+
 }
 
 
@@ -48,26 +65,29 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
     //load instruction
     int i;
     char instr[17];
-    unsigned short int rd;
-    unsigned short int rs;
-    unsigned short int rt;
-    unsigned short int val;
-    unsigned short int hex_instr = CPU->memory[CPU->PC];
-    
-     //convert instruction to string of "1" and "0"
-    for (i = 0; i < 16; i++) {
-        if ((hex_instr >> (15 - i)) % 2 == 1) {
-            instr[i] = '1';
-        } else {
-            instr[i] = '0';
+    uint8_t rd;
+    uint8_t rs;
+    uint8_t rt;
+    uint16_t cnst;
+    uint16_t next_pc; 
+    uint16_t pc;
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+
+    if (DEBUG) {
+        //convert instruction to string of "1" and "0" for debuging
+        for (i = 0; i < 16; i++) {
+            if ((hex_instr >> (15 - i)) % 2 == 1) {
+                instr[i] = '1';
+            } else {
+                instr[i] = '0';
+            }
         }
+        instr[16] = '\0';
+        printf("PC: 0x%X\n", CPU->PC);
+        printf("Control Word: %s\n", instr);
     }
-    instr[16] = '\0';
-    
-    
-    printf("PC: 0x%X\n", CPU->PC);
-    //printf("Control Word: %s\n", instr);
-    
+
+    // hex_instr >> 12 will give us uint16 of hex_instr[15:12]that we can use to identify
     switch (hex_instr >> 12) {
         case 0: //BR
             BranchOp(CPU, output);
@@ -85,19 +105,31 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             LogicalOp(CPU, output);
             break;
         case 6: //LDR
+            //check PSR AND BOUNDS!!!!
+            rd = INSTR_11_9(hex_instr);
+            rs = INSTR_8_6(hex_instr);
+            CPU->R[rd] = CPU->memory[CPU->R[rs] + IMM6(hex_instr)];
             break;
         case 7: //STR
+            //check PSR AND BOUNDS!!!!
+            rt = INSTR_11_9(hex_instr);
+            rs = INSTR_8_6(hex_instr);
+            CPU->memory[CPU->R[rs] + IMM6(hex_instr)] = CPU->R[rt];
             break;
         case 8: //RTI
-            printf("RTI\n");
+            if (DEBUG) {
+                printf("RTI\n");
+            }
             memcpy(&CPU->PC, &CPU->R[7], 2);
             CPU->PSR = CPU->PSR & 0x7FFF;
             break;
         case 9: //CONST
-            rd = (hex_instr & 0x0E00) >> 9;
-            val = hex_instr & 0x01FF;
-            printf("CONST R%d, #%d\n", rd, val);
-            CPU->R[rd] = val;
+            rd = (hex_instr & 0xE00) >> 9;
+            cnst = hex_instr & 0x1FF;
+            if (DEBUG) {
+                printf("CONST R%d, #%d\n", rd, cnst);
+            }
+            CPU->R[rd] = cnst;
             CPU->PC = CPU->PC + 1;
             break;
         case 10: //SHIFT
@@ -107,14 +139,23 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             JumpOp(CPU, output);
             break;
         case 13: //HICONST
+            rd = INSTR_11_9(hex_instr);
+            CPU->R[rd] = (CPU->R[rd] & 0xFF) | ((CPU->R[rd] & 0xFF) << 8);
             break;
         case 15: //TRAP
+            next_pc = CPU->PC + 1;
+            pc = 0x8000 | (hex_instr & 0xFF);
+            memcpy(&CPU->R[7], &next_pc, 2);
+            memcpy(&CPU->PC, &pc, 2);
+            CPU->PSR = CPU->PSR | 0x8000;
             break;
         default:
             break;
-            
+
     }
-    printf("\n");
+    if (DEBUG) {
+        printf("\n");
+    }
     WriteOut(CPU, output);
     return 0;
 }
@@ -129,64 +170,120 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
  * Parses rest of branch operation and updates state of machine.
  */
 void BranchOp(MachineState* CPU, FILE* output) {
-    unsigned short int hex_instr = CPU->memory[CPU->PC];
-    unsigned short int nzp = hex_instr & 0x0E00 >> 9;
-    short int imm9 = (short int) hex_instr & 0x1FF;
-    printf("0x%X\n", hex_instr);
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t nzp = INSTR_11_9(hex_instr);
+    int16_t imm9 = IMM9(hex_instr);
     switch (nzp) {
         case 4: //N
+            if (DEBUG) {
+                printf("BRn\n");
+            }
             if ((CPU->PSR >> 2) % 2 == 1) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                printf("BRn: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 6: //N|Z
+            if (DEBUG) {
+                printf("BRnz\n");
+            }
             if ((CPU->PSR >> 2) % 2 == 1 || (CPU->PSR >> 1) % 2 == 1 ) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                 printf("BRnz: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 5: //N|P
+            if (DEBUG) {
+                printf("BRnp\n");
+            }
             if ((CPU->PSR >> 2) % 2 == 1 || (CPU->PSR % 2) == 1 ) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                 printf("BRnp: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 2: //Z
+            if (DEBUG) {
+                printf("BRz\n");
+            }
             if ((CPU->PSR >> 1) % 2 == 1) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                 printf("BRz: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 3: //Z|P
+            if (DEBUG) {
+                printf("BRzp\n");
+            }
             if ((CPU->PSR >> 1) % 2 == 1 || (CPU->PSR % 2) == 1 ) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                 printf("BRzp: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 1: //P
+            if (DEBUG) {
+                printf("BRp\n");
+            }
             if (CPU->PSR % 2 == 1) {
                 CPU->PC = CPU->PC + 1 + imm9;
-                 printf("BRp: PC = 0x%X\n", CPU->PC);
+                if (DEBUG) {
+                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
+                }
             } else {
                 CPU->PC = CPU->PC + 1;
+                if (DEBUG) {
+                    printf("No Branch -> PC = PC + 1\n");
+                }
             }
             break;
         case 7: //forced branch
+            if (DEBUG) {
+                printf("BRnzp\n");
+            }
             CPU->PC = CPU->PC + 1 + imm9;
-            printf("BRnzp: PC = 0x%X\n", CPU->PC);
+            if (DEBUG) {
+                printf("Branch -> PC = PC + %d\n", imm9 + 1);
+            }
             break;
         default: //do nothing
+            if (DEBUG) {
+                printf("DO NOTHING\n");
+            }
+            CPU->PC = CPU->PC + 1;
             break;
     }
 }
@@ -195,160 +292,233 @@ void BranchOp(MachineState* CPU, FILE* output) {
  * Parses rest of arithmetic operation and prints out.
  */
 void ArithmeticOp(MachineState* CPU, FILE* output) {
-    unsigned short int hex_instr = CPU->memory[CPU->PC];
-    unsigned short int rd = (hex_instr & 0x0E00) >> 9;
-    unsigned short int rs = (hex_instr & 0x01C0) >> 6;
-    unsigned short int rt = hex_instr & 0x0007;
-    unsigned short int op = (hex_instr >> 3) & 0x0007;
-    short int imm5 = (hex_instr & 0x001F) - 32;
-
-    switch (op) {
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rd = INSTR_11_9(hex_instr);
+    uint8_t rs = INSTR_8_6(hex_instr);
+    uint8_t rt = INSTR_2_0(hex_instr);
+    uint8_t sub_op_code = INSTR_5_3(hex_instr);
+    int8_t imm5 = IMM5(hex_instr);
+    switch (sub_op_code) {
         case 0: //add
             CPU->R[rd] = CPU->R[rs] + CPU->R[rt];
-            printf("ADD R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("ADD R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         case 1: //mult
             CPU->R[rd] = CPU->R[rs] * CPU->R[rt];
-            printf("MUL R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("MUL R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         case 2: //sub
             CPU->R[rd] = CPU->R[rs] - CPU->R[rt];
-             printf("SUB R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("SUB R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         case 3: //div
-            CPU->R[rd] = CPU->R[rs] / CPU->R[rt];
-            printf("DIV R%d, R%d R%d\n", rd, rs, rt);
+            if (CPU->R[rt]) {
+                CPU->R[rd] = CPU->R[rs] / CPU->R[rt];
+                if (DEBUG) {
+                    printf("DIV R%d, R%d R%d\n", rd, rs, rt);
+                }
+            }
             break;
         default: //else add immediate
             CPU->R[rd] = CPU->R[rs] + imm5;
-            printf("ADD R%d, R%d #%d\n", rd, rs, imm5);
+            if (DEBUG) {
+                printf("ADD R%d, R%d #%d\n", rd, rs, imm5);
+            }
             break;
     }
-    
+
     CPU->PC = CPU->PC + 1;
+    if (DEBUG) {
+        printf("PC = PC + 1\n");
+    }
 }
 
 /*
  * Parses rest of comparative operation and prints out.
  */
 void ComparativeOp(MachineState* CPU, FILE* output) {
-    unsigned short int hex_instr = CPU->memory[CPU->PC];
-    unsigned short int rs = (hex_instr & 0x0E00) >> 9;
-    unsigned short int rt = hex_instr & 0x0007;
-    unsigned short int op = (hex_instr >> 7) & 3;
-    short int imm7 = (short int) (hex_instr & 0x007F);
-    unsigned short int uimm7 = hex_instr & 0x007F;
-    short nzp = 0x0000;
-    switch (op) {
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rs = INSTR_11_9(hex_instr);
+    uint8_t rt = INSTR_2_0(hex_instr);
+    uint8_t sub_op_code = (hex_instr >> 7) & 0x3;
+    uint8_t uimm7 = hex_instr & 0x7F;
+    int8_t imm7 = IMM7(hex_instr);
+    switch (sub_op_code) {
         case 0: //CMP
-            printf("CMP R%d, R%d\n", rs, rt);
-            if ((short) CPU->R[rs] - (short) CPU->R[rt] < 0) { //NZP = 100
-                nzp = nzp | 0x0004;
-            } else if ((short) CPU->R[rs] - (short) CPU->R[rt] > 0) { //NZP = 001
-                nzp = nzp | 0x0001;
-            } else { //NZP = 010
-                nzp = nzp | 0x0002;
+            if (DEBUG) {
+                printf("CMP R%d, R%d\n", rs, rt);
             }
+            SetNZP(CPU, (int16_t) CPU->R[rs] - (int16_t) CPU->R[rt]);
             break;
         case 1: //CMPU
-            printf("CMPU R%d, R%d\n", rs, rt);
-            if (CPU->R[rs] - CPU->R[rt] < 0) { //NZP = 100
-                nzp = nzp | 0x0004;
-            } else if (CPU->R[rs] - CPU->R[rt] > 0) { //NZP = 001
-                nzp = nzp | 0x0001;
-            } else { //NZP = 010
-                nzp = nzp | 0x0002;
+            if (DEBUG) {
+                printf("CMPU R%d, R%d\n", rs, rt);
             }
+            SetNZP(CPU, (uint16_t) CPU->R[rs] - (uint16_t) CPU->R[rt]);
             break;
         case 2: //CMPI
-            printf("CMPI R%d, #%d\n", rs, imm7);
-            if ((short) CPU->R[rs] - imm7 < 0) { //NZP = 100
-                nzp = nzp | 0x0004;
-            } else if ((short) CPU->R[rs] - imm7 > 0) { //NZP = 001
-                nzp = nzp | 0x0001;
-            } else { //NZP = 010
-                nzp = nzp | 0x0002;
+            if (DEBUG) {
+                printf("CMPI R%d, #%hhd\n", rs, imm7);
             }
+            SetNZP(CPU, (int16_t) CPU->R[rs] - imm7);
             break;
         case 3: //CMPIU
-            printf("CMPIU R%d, #%d\n", rs, uimm7);
-            if (CPU->R[rs] - uimm7 < 0) { //NZP = 100
-                nzp = nzp | 0x0004;
-            } else if (CPU->R[rs] - uimm7 > 0) { //NZP = 001
-                nzp = nzp | 0x0001;
-            } else { //NZP = 010
-                nzp = nzp | 0x0002;
+            if (DEBUG) {
+                printf("CMPIU R%d, #%d\n", rs, uimm7);
             }
+            SetNZP(CPU, (uint16_t) CPU->R[rs] - uimm7);
             break;
         default:
             break;
     }
-    SetNZP(CPU, nzp);
     CPU->PC = CPU->PC + 1;
+    if (DEBUG) {
+        printf("PC = PC + 1\n");
+    }
 }
 
 /*
  * Parses rest of logical operation and prints out.
  */
 void LogicalOp(MachineState* CPU, FILE* output) {
-    unsigned short int hex_instr = CPU->memory[CPU->PC];
-    unsigned short int rd = (hex_instr & 0x0E00) >> 9;
-    unsigned short int rs = (hex_instr & 0x01C0) >> 6;
-    unsigned short int rt = hex_instr & 0x0007;
-    unsigned short int op = hex_instr & 0x0038 >> 3;
-    short int imm5 = (hex_instr & 0x001F) - 32;
-
-    switch (op) {
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rd = INSTR_11_9(hex_instr);
+    uint8_t rs = INSTR_8_6(hex_instr);
+    uint8_t rt = INSTR_2_0(hex_instr);
+    uint8_t sub_op_code = INSTR_5_3(hex_instr);
+    int8_t imm5 = IMM5(hex_instr);
+    switch (sub_op_code) {
         case 0: //and
             CPU->R[rd] = CPU->R[rs] & CPU->R[rt];
-            printf("AND R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("AND R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         case 1: //not
             CPU->R[rd] = ~CPU->R[rs];
-            printf("NOT R%d, R%d\n", rd, rs);
+            if (DEBUG) {
+                printf("NOT R%d, R%d\n", rd, rs);
+            }
             break;
         case 2: //or
             CPU->R[rd] = CPU->R[rs] | CPU->R[rt];
-             printf("OR R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("OR R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         case 3: //xor
             CPU->R[rd] = CPU->R[rs] ^ CPU->R[rt];
-            printf("XOR R%d, R%d R%d\n", rd, rs, rt);
+            if (DEBUG) {
+                printf("XOR R%d, R%d R%d\n", rd, rs, rt);
+            }
             break;
         default: //else and immediate
             CPU->R[rd] = CPU->R[rs] & imm5;
-            printf("AND R%d, R%d #%d\n", rd, rs, imm5);
+            if (DEBUG) {
+                printf("AND R%d, R%d #%d\n", rd, rs, imm5);
+            }
             break;
     }
-    
+
     CPU->PC = CPU->PC + 1;
+    if (DEBUG) {
+        printf("PC = PC + 1\n");
+    }
 }
 
 /*
  * Parses rest of jump operation and prints out.
  */
 void JumpOp(MachineState* CPU, FILE* output) {
-    
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rs = INSTR_8_6(hex_instr);
+    int16_t imm11 = IMM11(hex_instr);
+    uint16_t next_pc = CPU->PC + 1 + imm11;
+    uint16_t pc = (CPU->PC & 0x8000) | (imm11 << 4);
+    switch ((hex_instr >> 11) & 0x1) {
+        case 0: //JMPR
+            memcpy(&CPU->PC, &CPU->R[rs], 2);
+            break;
+        case 1: //JMP
+            memcpy(&CPU->PC, &next_pc, 2);
+            break;
+        default:
+            break;
+    }
 }
 
 /*
  * Parses rest of JSR operation and prints out.
  */
 void JSROp(MachineState* CPU, FILE* output) {
-    
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rs = INSTR_8_6(hex_instr);
+    int16_t imm11 = IMM11(hex_instr);
+    uint16_t next_pc = CPU->PC + 1;
+    uint16_t pc = (CPU->PC & 0x8000) | (imm11 << 4);
+    switch ((hex_instr >> 11) & 0x1) {
+        case 0: //JSR
+            memcpy(&CPU->R[7], &next_pc, 2);
+            memcpy(&CPU->PC, &pc, 2);
+            break;
+        case 1: //JSRR
+            memcpy(&CPU->R[7], &next_pc, 2);
+            memcpy(&CPU->PC, &CPU->R[rs], 2);
+            break;
+        default:
+            break;
+    }
 }
 
 /*
  * Parses rest of shift/mod operations and prints out.
  */
 void ShiftModOp(MachineState* CPU, FILE* output) {
-    
+    uint16_t hex_instr = CPU->memory[CPU->PC];
+    uint8_t rd = INSTR_11_9(hex_instr);
+    uint8_t rs = INSTR_8_6(hex_instr);
+    uint8_t rt = INSTR_2_0(hex_instr);
+    int8_t imm4 = IMM4(hex_instr);
+    uint8_t sub_op_code = (hex_instr >> 4) & 0x3;
+    switch(sub_op_code) {
+        case 0: //SLL
+            CPU->R[rd] = CPU->R[rs] << imm4;
+            break;
+        case 1: //SRA
+            CPU->R[rd] = (CPU->R[rs] >> imm4) | (CPU->R[rs] | 0x8000);
+            break;
+        case 2: //SRL
+            CPU->R[rd] = CPU->R[rs] >> imm4;
+            break;
+        case 3: //MOD
+            CPU->R[rd] = CPU->R[rs] % CPU->R[rt];
+            break;
+        default:
+            break;
+    }
+    CPU->PC = CPU->PC + 1;
 }
 
 /*
  * Set the NZP bits in the PSR.
  */
 void SetNZP(MachineState* CPU, short result) {
-    CPU->PSR = (CPU->PSR & 0x8000) | result;
-    printf("PSR: 0x%X\n", CPU->PSR);
+    short nzp = 0x0000;
+    if (result < 0) { //NZP = 100
+        nzp = nzp | 0x4;
+    } else if (result > 0) { //NZP = 001
+        nzp = nzp | 0x1;
+    } else { //NZP = 010
+        nzp = nzp | 0x2;
+    }
+    CPU->PSR = (CPU->PSR & 0x8000) | nzp;
+    if (DEBUG) {
+        printf("PSR: 0x%X\n", CPU->PSR);
+    }
 }

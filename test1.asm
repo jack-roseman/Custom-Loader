@@ -1,7 +1,7 @@
 .CODE
 .ADDR 0x0000
 FACTORIAL
-CONST R0, #7   
+CONST R0, #8   
 AND R1, R0 #-1   
 LOOP
  CMPI R0, #1     

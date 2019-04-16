@@ -62,12 +62,9 @@ int main(int argc, char** argv){
     
     Reset(CPU);
     ClearSignals(CPU);
-    j = 0;
-    while (j < 50) {
+    while ((((CPU->PSR >> 15) % 2 == 0 && CPU->PC < 0x80FF) || ((CPU->PSR >> 15) % 2 == 1))) {
         UpdateMachineState(CPU, out_txt_file);
-        j++;
     }
-    
     fclose(out_txt_file);
 	free(CPU);
     return 0;
