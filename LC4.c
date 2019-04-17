@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#define DEBUG 1
+#define DEBUG 0
 
 //macros
 #define IMM4(I) (((I & 0xF) >> 3) % 2 == 1 ? (I & 0xF) - 16 : (I & 0xF))
@@ -15,10 +15,13 @@
 #define IMM7(I) (((I & 0x7F) >> 6) % 2 == 1 ? (I & 0x7F) - 128 : (I & 0x7F))
 #define IMM9(I) (((I & 0x1FF) >> 8) % 2 == 1 ? (I & 0x1FF) - 512 : (I & 0x1FF))
 #define IMM11(I) (((I & 0x7FF) >> 10) % 2 == 1 ? (I & 0x7FF) - 2048 : (I & 0x7FF))
+#define UIMM7(I) (I & 0x7F)
+#define INSTR_15_12(I) (I >> 12)
 #define INSTR_11_9(I) ((I >> 9) & 0x7)
 #define INSTR_8_6(I) ((I >> 6) & 0x7)
 #define INSTR_5_3(I) ((I >> 3) & 0x7)
 #define INSTR_2_0(I) (I & 0x7)
+#define PRIVILEDGE_BIT(I) (I >> 15)
 
 /*
  * Reset the machine state as Pennsim would do
@@ -26,14 +29,14 @@
 void Reset(MachineState* CPU) {
     CPU->PC = (uint16_t) 0x8200;
     CPU->PSR = (uint16_t) 0x8002;
-    memset(CPU->R, (uint16_t) 0x0, 8);
+    memset(CPU->R, 0, 8);
 
     //clear signals
     ClearSignals(CPU);
-    CPU->regInputVal = (uint16_t) 0x0;
-    CPU->NZPVal = (uint16_t) 0x0;
-    CPU->dmemAddr = (uint16_t) 0x0;
-    CPU->dmemValue = (uint16_t) 0x0;
+    CPU->regInputVal = 0;
+    CPU->NZPVal = 0;
+    CPU->dmemAddr = 0;
+    CPU->dmemValue = 0;
 }
 
 
@@ -41,12 +44,12 @@ void Reset(MachineState* CPU) {
  * Clear all of the control signals (set to 0)
  */
 void ClearSignals(MachineState* CPU) {
-    CPU->rsMux_CTL = (unsigned char) 0x0;
-    CPU->rtMux_CTL = (unsigned char) 0x0;
-    CPU->rdMux_CTL = (unsigned char) 0x0;
-    CPU->regFile_WE = (unsigned char) 0x0;
-    CPU->NZP_WE = (unsigned char) 0x0;
-    CPU->DATA_WE= (unsigned char) 0x0;
+    CPU->rsMux_CTL  = 0;
+    CPU->rtMux_CTL  = 0;
+    CPU->rdMux_CTL  = 0;
+    CPU->regFile_WE = 0;
+    CPU->NZP_WE     = 0;
+    CPU->DATA_WE    = 0;
 }
 
 
@@ -69,7 +72,11 @@ void WriteOut(MachineState* CPU, FILE* output) {
     fprintf(output, "%s ", instr);          //print instruction
     fprintf(output, "%d ", CPU->regFile_WE);
     if (CPU->regFile_WE) {
-        fprintf(output, "%d ", INSTR_11_9(hex_instr));
+        if (INSTR_15_12(hex_instr) == 0xF) {
+            fprintf(output, "%d ", 7);
+        } else {
+            fprintf(output, "%d ", INSTR_11_9(hex_instr));
+        }
         fprintf(output, "%04X ", CPU->regInputVal);
     } else {
         fprintf(output, "%d ", 0);
@@ -82,7 +89,7 @@ void WriteOut(MachineState* CPU, FILE* output) {
         fprintf(output, "%d ", 0);
     }
     fprintf(output, "%d ", CPU->DATA_WE);
-    if (CPU->DATA_WE) {
+    if (CPU->DATA_WE || (INSTR_15_12(hex_instr) == 6)) {
         fprintf(output, "%04X ", CPU->dmemAddr);
         fprintf(output, "%04X ", CPU->dmemValue);
     } else {
@@ -104,10 +111,8 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
     uint8_t rs;
     uint8_t rt;
     uint16_t cnst;
-    uint16_t next_pc; 
-    uint16_t pc;
+    uint16_t old_pc;
     uint16_t hex_instr = CPU->memory[CPU->PC];
-    
     if (DEBUG) {
         //convert instruction to string of "1" and "0" for debuging
         for (i = 0; i < 16; i++) {
@@ -121,13 +126,9 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
         printf("PC: 0x%X\n", CPU->PC);
         printf("Control Word: %s\n", instr);
     }
-    
     // hex_instr >> 12 will give us uint16 of hex_instr[15:12]that we can use to identify
-    switch (hex_instr >> 12) {
+    switch (INSTR_15_12(hex_instr)) {
         case 0: //BR
-            CPU->rsMux_CTL = 0; //X
-            CPU->rtMux_CTL = 0; //X
-            CPU->rdMux_CTL = 0; //X
             CPU->regFile_WE = 0;
             CPU->NZP_WE = 0;
             CPU->DATA_WE = 0;
@@ -147,7 +148,6 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
         case 2: //CMP
             CPU->rsMux_CTL = 2; 
             CPU->rtMux_CTL = 0;
-            CPU->rdMux_CTL = 0; //X
             CPU->regFile_WE = 0;
             CPU->NZP_WE = 1;
             CPU->DATA_WE = 0;
@@ -155,13 +155,22 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             CPU->PC = CPU->PC + 1;
             break;
         case 4: //JSR / JSRR
-            CPU->rsMux_CTL = 0; //X unless JSRR
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 1; 
             CPU->regFile_WE = 1;
             CPU->NZP_WE = 0;
             CPU->DATA_WE = 0;
+            old_pc = CPU->PC;
             JSROp(CPU, output);
+            if ((old_pc < 0x2000) && (CPU->PC >= 0x2000)) {
+                printf("Illegal JMP/JMPR: cannot jump out of USER CODE section.\n");
+                return 0;
+            }
+            if(((old_pc >= 0x8000) && (old_pc < 0xA000)) && 
+               ((CPU->PC < 0x8000) || (CPU->PC >= 0xA000))) {
+                printf("Illegal JMP/JMPR: cannot jump out of OS CODE section.\n");
+                return 0;
+            }
+            WriteOut(CPU, output);
             break;
         case 5: //LOGICAL
             CPU->rsMux_CTL = 0; 
@@ -176,14 +185,29 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
         case 6: //LDR
             //check PSR AND BOUNDS!!!!
             CPU->rsMux_CTL = 0; 
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 0; 
             CPU->regFile_WE = 1;
             CPU->NZP_WE = 1;
             CPU->DATA_WE = 0;
             rd = INSTR_11_9(hex_instr);
             rs = INSTR_8_6(hex_instr);
-            CPU->R[rd] = CPU->memory[CPU->R[rs] + IMM6(hex_instr)];
+            CPU->dmemAddr = CPU->R[rs] + IMM6(hex_instr);
+            if ((CPU->PC >= 0x2000 && CPU->PC < 0x8000) || 
+                (CPU->PC >= 0xA000 && CPU->PC <= 0xFFFF)) {
+                //in data section so program exits
+                printf("Illegal LDR: cannot read/write while executing in data section.\n");
+                return 0;
+            }
+            if ((CPU->dmemAddr < 0x2000) || (CPU->dmemAddr > 0x7FFF && CPU->dmemAddr < 0xA000)) {
+                printf("Illegal LDR: read address is in CODE section.\n");
+                return 0;
+            }
+            if ((PRIVILEDGE_BIT(CPU->PSR) == 0) && (CPU->dmemAddr >= 0x8000)) {
+                printf("Illegal LDR: load address not in User section and priviledge bit is false.\n");
+                return 0;
+            }
+            CPU->R[rd] = CPU->memory[CPU->dmemAddr];
+            CPU->dmemValue = CPU->R[rd];
             SetNZP(CPU, CPU->R[rd]);
             WriteOut(CPU, output);
             CPU->PC = CPU->PC + 1;
@@ -192,35 +216,42 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             //check PSR AND BOUNDS!!!!
             CPU->rsMux_CTL = 0; 
             CPU->rtMux_CTL = 1; 
-            CPU->rdMux_CTL = 0; //X
             CPU->regFile_WE = 0;
             CPU->NZP_WE = 0;
             CPU->DATA_WE = 1;
             rt = INSTR_11_9(hex_instr);
             rs = INSTR_8_6(hex_instr);
-            CPU->memory[CPU->R[rs] + IMM6(hex_instr)] = CPU->R[rt];
             CPU->dmemAddr = CPU->R[rs] + IMM6(hex_instr);
+            if ((CPU->PC >= 0x2000 && CPU->PC < 0x8000) || 
+                (CPU->PC >= 0xA000 && CPU->PC <= 0xFFFF)) {
+                //curently executing in data section so program exits
+                printf("Illegal STR: cannot read/write while executing in data section.\n");
+                return 0;
+            }
+            if ((CPU->dmemAddr < 0x2000) || (CPU->dmemAddr > 0x7FFF && CPU->dmemAddr < 0xA000)) {
+                printf("Illegal STR: write address is in CODE section.\n");
+                return 0;
+            }
+            if ((PRIVILEDGE_BIT(CPU->PSR) == 0) && (CPU->dmemAddr >= 0x8000)) {
+                printf("Illegal STR: priviledge bit is false and write address is in OS section.\n");
+                return 0;
+            }
+            CPU->memory[CPU->dmemAddr] = CPU->R[rt];
             CPU->dmemValue = CPU->R[rt];
             WriteOut(CPU, output);
             CPU->PC = CPU->PC + 1;
             break;
         case 8: //RTI
-            if (DEBUG) {
-                printf("RTI\n");
-            }
+            if (DEBUG) {printf("RTI\n");}
             CPU->rsMux_CTL = 1; 
-            CPU->rtMux_CTL = 0; //X
-            CPU->rdMux_CTL = 0; //X
             CPU->regFile_WE = 0;
             CPU->NZP_WE = 0;
             CPU->DATA_WE = 0;
             WriteOut(CPU, output);
-            memcpy(&CPU->PC, &CPU->R[7], 2);
+            CPU->PC = CPU->R[7];
             CPU->PSR = CPU->PSR & 0x7FFF;
             break;
         case 9: //CONST
-            CPU->rsMux_CTL = 0; //X
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 0; 
             CPU->regFile_WE = 1;
             CPU->NZP_WE = 1;
@@ -238,7 +269,6 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             break;
         case 10: //SHIFT
             CPU->rsMux_CTL = 0;
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 0; 
             CPU->regFile_WE = 1;
             CPU->NZP_WE = 0;
@@ -248,50 +278,62 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
             break;
         case 12: //JMP / JMPR
             CPU->rsMux_CTL = 0; 
-            CPU->rtMux_CTL = 0; //X
-            CPU->rdMux_CTL = 0; //X
             CPU->regFile_WE = 0;
             CPU->NZP_WE = 0;
             CPU->DATA_WE = 0;
+            old_pc = CPU->PC;
             JumpOp(CPU, output);
+            if ((old_pc < 0x2000) && (CPU->PC >= 0x2000)) {
+                printf("Illegal JMP/JMPR: cannot jump out of USER CODE section.\n");
+                return 0;
+            }
+            if(((old_pc >= 0x8000) && (old_pc < 0xA000)) && 
+               ((CPU->PC < 0x8000) || (CPU->PC >= 0xA000))) {
+                printf("Illegal JMP/JMPR: cannot jump out of OS CODE section.\n");
+                return 0;
+            }
+            WriteOut(CPU, output);
             break;
         case 13: //HICONST
-            CPU->rsMux_CTL = 0; //X
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 0; 
             CPU->regFile_WE = 1;
-            CPU->NZP_WE = 0;
+            CPU->NZP_WE = 1;
             CPU->DATA_WE = 0;
             rd = INSTR_11_9(hex_instr);
-            CPU->R[rd] = (CPU->R[rd] & 0xFF) | ((CPU->R[rd] & 0xFF) << 8);
+            CPU->R[rd] = (CPU->R[rd] & 0xFF) | ((hex_instr & 0xFF) << 8);
             CPU->regInputVal = CPU->R[rd];
+            SetNZP(CPU, CPU->R[rd]);
             WriteOut(CPU, output);
             CPU->PC = CPU->PC + 1;
             break;
         case 15: //TRAP
-            CPU->rsMux_CTL = 0; //X
-            CPU->rtMux_CTL = 0; //X
             CPU->rdMux_CTL = 1; 
             CPU->regFile_WE = 1;
-            CPU->NZP_WE = 0;
+            CPU->NZP_WE = 1;
             CPU->DATA_WE = 0;
-            next_pc = CPU->PC + 1;
-            pc = 0x8000 | (hex_instr & 0xFF);
-            memcpy(&CPU->R[7], &next_pc, 2); //R7 = PC + 1
-            CPU->regInputVal = next_pc;
+            CPU->R[7] = CPU->PC + 1; //R7 = PC + 1
+            CPU->regInputVal = CPU->R[7];
+            SetNZP(CPU, CPU->R[7]);
             WriteOut(CPU, output);
-            memcpy(&CPU->PC, &pc, 2); //PC = 0x8000 | UIMM8;
+            if ((hex_instr & 0xFF) == 0xFF) { //HALT
+                if (DEBUG) {
+                    printf("\nTRAP xFF ... LC4 HALTED\n");
+                }
+                return 0;
+            }
+            CPU->PC = 0x8000 | (hex_instr & 0xFF); //PC = 0x8000 | UIMM8;
             CPU->PSR = CPU->PSR | 0x8000; //PSR[15] = 1
             break;
         default:
-            break;
+            if (DEBUG) {printf("Shouldn't be here. \n");}
+            return 0;
 
     }
     if (DEBUG) {
         printf("\n");
     }
     ClearSignals(CPU);
-    return 0;
+    return 1;
 }
 
 
@@ -305,113 +347,64 @@ int UpdateMachineState(MachineState* CPU, FILE* output) {
  */
 void BranchOp(MachineState* CPU, FILE* output) {
     uint16_t hex_instr = CPU->memory[CPU->PC];
-    uint8_t nzp = INSTR_11_9(hex_instr);
-    int16_t imm9 = IMM9(hex_instr);
-    switch (nzp) {
+    switch (INSTR_11_9(hex_instr)) {
         case 4: //N
-            if (DEBUG) {
-                printf("BRn\n");
-            }
             if ((CPU->PSR >> 2) % 2 == 1) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) {printf("BRn ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRn ... No Branch\n");}
             }
             break;
         case 6: //N|Z
-            if (DEBUG) {
-                printf("BRnz\n");
-            }
             if ((CPU->PSR >> 2) % 2 == 1 || (CPU->PSR >> 1) % 2 == 1 ) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) {printf("BRnz ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRnz ... No Branch\n");}
             }
             break;
         case 5: //N|P
-            if (DEBUG) {
-                printf("BRnp\n");
-            }
             if ((CPU->PSR >> 2) % 2 == 1 || (CPU->PSR % 2) == 1 ) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) {printf("BRnp ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRnp ... No Branch\n");}
             }
             break;
         case 2: //Z
-            if (DEBUG) {
-                printf("BRz\n");
-            }
             if ((CPU->PSR >> 1) % 2 == 1) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) {printf("BRz ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRz ... No Branch\n");}
             }
             break;
         case 3: //Z|P
-            if (DEBUG) {
-                printf("BRzp\n");
-            }
             if ((CPU->PSR >> 1) % 2 == 1 || (CPU->PSR % 2) == 1 ) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) { printf("BRzp ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRzp ... No Branch\n");}
             }
             break;
         case 1: //P
-            if (DEBUG) {
-                printf("BRp\n");
-            }
             if (CPU->PSR % 2 == 1) {
-                CPU->PC = CPU->PC + 1 + imm9;
-                if (DEBUG) {
-                    printf("Branch -> PC = PC + %d\n", imm9 + 1);
-                }
+                CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+                if (DEBUG) {printf("BRp ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             } else {
                 CPU->PC = CPU->PC + 1;
-                if (DEBUG) {
-                    printf("No Branch -> PC = PC + 1\n");
-                }
+                if (DEBUG) {printf("BRp ... No Branch\n");}
             }
             break;
         case 7: //forced branch
-            if (DEBUG) {
-                printf("BRnzp\n");
-            }
-            CPU->PC = CPU->PC + 1 + imm9;
-            if (DEBUG) {
-                printf("Branch -> PC = PC + %d\n", imm9 + 1);
-            }
+            CPU->PC = CPU->PC + 1 + IMM9(hex_instr);
+            if (DEBUG) {printf("BRnzp ... PC = PC + %d\n", IMM9(hex_instr) + 1);}
             break;
         default: //do nothing
             if (DEBUG) {
@@ -482,41 +475,27 @@ void ComparativeOp(MachineState* CPU, FILE* output) {
     uint16_t hex_instr = CPU->memory[CPU->PC];
     uint8_t rs = INSTR_11_9(hex_instr);
     uint8_t rt = INSTR_2_0(hex_instr);
-    uint8_t sub_op_code = (hex_instr >> 7) & 0x3;
-    uint8_t uimm7 = hex_instr & 0x7F;
-    int8_t imm7 = IMM7(hex_instr);
-    switch (sub_op_code) {
+    switch ((hex_instr >> 7) & 0x3) {
         case 0: //CMP
-            if (DEBUG) {
-                printf("CMP R%d, R%d\n", rs, rt);
-            }
+            if (DEBUG) {printf("CMP R%d, R%d\n", rs, rt);}
             SetNZP(CPU, (int16_t) CPU->R[rs] - (int16_t) CPU->R[rt]);
             break;
         case 1: //CMPU
-            if (DEBUG) {
-                printf("CMPU R%d, R%d\n", rs, rt);
-            }
+            if (DEBUG) {printf("CMPU R%d, R%d\n", rs, rt);}
             SetNZP(CPU, (uint16_t) CPU->R[rs] - (uint16_t) CPU->R[rt]);
             break;
         case 2: //CMPI
-            if (DEBUG) {
-                printf("CMPI R%d, #%hhd\n", rs, imm7);
-            }
-            SetNZP(CPU, (int16_t) CPU->R[rs] - imm7);
+            if (DEBUG) {printf("CMPI R%d, #%hi\n", rs, (uint16_t) IMM7(hex_instr));}
+            SetNZP(CPU, (int16_t) CPU->R[rs] - (uint16_t) IMM7(hex_instr));
             break;
         case 3: //CMPIU
-            if (DEBUG) {
-                printf("CMPIU R%d, #%d\n", rs, uimm7);
-            }
-            SetNZP(CPU, (uint16_t) CPU->R[rs] - uimm7);
+            if (DEBUG) {printf("CMPIU R%d, #%hu\n", rs, (uint16_t) UIMM7(hex_instr));}
+            SetNZP(CPU, (uint16_t) CPU->R[rs] - (uint16_t) UIMM7(hex_instr));
             break;
         default:
             break;
     }
     WriteOut(CPU, output);
-    if (DEBUG) {
-        printf("PC = PC + 1\n");
-    }
 }
 
 /*
@@ -527,47 +506,32 @@ void LogicalOp(MachineState* CPU, FILE* output) {
     uint8_t rd = INSTR_11_9(hex_instr);
     uint8_t rs = INSTR_8_6(hex_instr);
     uint8_t rt = INSTR_2_0(hex_instr);
-    uint8_t sub_op_code = INSTR_5_3(hex_instr);
-    int8_t imm5 = IMM5(hex_instr);
-    switch (sub_op_code) {
+    switch (INSTR_5_3(hex_instr)) {
         case 0: //and
             CPU->R[rd] = CPU->R[rs] & CPU->R[rt];
-            if (DEBUG) {
-                printf("AND R%d, R%d R%d\n", rd, rs, rt);
-            }
+            if (DEBUG) {printf("AND R%d, R%d R%d\n", rd, rs, rt);}
             break;
         case 1: //not
             CPU->R[rd] = ~CPU->R[rs];
-            if (DEBUG) {
-                printf("NOT R%d, R%d\n", rd, rs);
-            }
+            if (DEBUG) {printf("NOT R%d, R%d\n", rd, rs);}
             break;
         case 2: //or
             CPU->R[rd] = CPU->R[rs] | CPU->R[rt];
-            if (DEBUG) {
-                printf("OR R%d, R%d R%d\n", rd, rs, rt);
-            }
+            if (DEBUG) {printf("OR R%d, R%d R%d\n", rd, rs, rt);}
             break;
         case 3: //xor
             CPU->R[rd] = CPU->R[rs] ^ CPU->R[rt];
-            if (DEBUG) {
-                printf("XOR R%d, R%d R%d\n", rd, rs, rt);
-            }
+            if (DEBUG) {printf("XOR R%d, R%d R%d\n", rd, rs, rt);}
             break;
         default: //else and immediate
-            CPU->R[rd] = CPU->R[rs] & imm5;
-            if (DEBUG) {
-                printf("AND R%d, R%d #%d\n", rd, rs, imm5);
-            }
+            CPU->R[rd] = CPU->R[rs] & IMM5(hex_instr);
+            if (DEBUG) {printf("AND R%d, R%d #%d\n", rd, rs, IMM5(hex_instr));}
             break;
     }
 
     CPU->regInputVal = CPU->R[rd]; 
     SetNZP(CPU, CPU->regInputVal);
     WriteOut(CPU, output);
-    if (DEBUG) {
-        printf("PC = PC + 1\n");
-    }
 }
 
 /*
@@ -576,16 +540,12 @@ void LogicalOp(MachineState* CPU, FILE* output) {
 void JumpOp(MachineState* CPU, FILE* output) {
     uint16_t hex_instr = CPU->memory[CPU->PC];
     uint8_t rs = INSTR_8_6(hex_instr);
-    int16_t imm11 = IMM11(hex_instr);
-    uint16_t next_pc = CPU->PC + 1 + imm11;
-    uint16_t pc = (CPU->PC & 0x8000) | (imm11 << 4);
-    WriteOut(CPU, output);
     switch ((hex_instr >> 11) & 0x1) {
         case 0: //JMPR
-            memcpy(&CPU->PC, &CPU->R[rs], 2);
+            CPU->PC = CPU->R[rs];
             break;
         case 1: //JMP
-            memcpy(&CPU->PC, &next_pc, 2);
+            CPU->PC = CPU->PC + 1 + IMM11(hex_instr);
             break;
         default:
             break;
@@ -598,23 +558,18 @@ void JumpOp(MachineState* CPU, FILE* output) {
 void JSROp(MachineState* CPU, FILE* output) {
     uint16_t hex_instr = CPU->memory[CPU->PC];
     uint8_t rs = INSTR_8_6(hex_instr);
-    int16_t imm11 = IMM11(hex_instr);
-    uint16_t next_pc = CPU->PC + 1;
-    uint16_t pc = (CPU->PC & 0x8000) | (imm11 << 4);
-    memcpy(&CPU->R[7], &next_pc, 2);
-    WriteOut(CPU, output);
+    CPU->R[7] = CPU->PC + 1; //R7 = PC + 1
+    CPU->regInputVal = CPU->R[7];
     switch ((hex_instr >> 11) & 0x1) {
         case 0: //JSR
-            memcpy(&CPU->PC, &pc, 2);
+            CPU->PC = (CPU->PC & 0x8000) | (IMM11(hex_instr) << 4);;  //PC = (PC & 0x8000) | (imm11 << 4)
             break;
         case 1: //JSRR
-            memcpy(&CPU->PC, &CPU->R[rs], 2);
+            CPU->PC = CPU->R[rs];  //PC = Rs
             break;
         default:
             break;
     }
-    
-    CPU->regInputVal = next_pc;
 }
 
 /*
@@ -625,17 +580,15 @@ void ShiftModOp(MachineState* CPU, FILE* output) {
     uint8_t rd = INSTR_11_9(hex_instr);
     uint8_t rs = INSTR_8_6(hex_instr);
     uint8_t rt = INSTR_2_0(hex_instr);
-    int8_t imm4 = IMM4(hex_instr);
-    uint8_t sub_op_code = (hex_instr >> 4) & 0x3;
-    switch(sub_op_code) {
+    switch((hex_instr >> 4) & 0x3) {
         case 0: //SLL
-            CPU->R[rd] = CPU->R[rs] << imm4;
+            CPU->R[rd] = CPU->R[rs] << IMM4(hex_instr);
             break;
         case 1: //SRA
-            CPU->R[rd] = (CPU->R[rs] >> imm4) | (CPU->R[rs] | 0x8000);
+            CPU->R[rd] = (CPU->R[rs] >> IMM4(hex_instr)) | (CPU->R[rs] | 0x8000);
             break;
         case 2: //SRL
-            CPU->R[rd] = CPU->R[rs] >> imm4;
+            CPU->R[rd] = CPU->R[rs] >> IMM4(hex_instr);
             break;
         case 3: //MOD
             CPU->R[rd] = CPU->R[rs] % CPU->R[rt];

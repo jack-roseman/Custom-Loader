@@ -61,10 +61,11 @@ int main(int argc, char** argv){
 //     }
     
     Reset(CPU);
-    while ((((CPU->PSR >> 15) % 2 == 0 && CPU->PC < 0x0010) || ((CPU->PSR >> 15) % 2 == 1))) {
-        UpdateMachineState(CPU, out_txt_file);
+    while ((((CPU->PSR >> 15) % 2 == 0 && CPU->PC < 0x80FF) || ((CPU->PSR >> 15) % 2 == 1 && CPU->PC >= 0x8020))) {
+        if (!UpdateMachineState(CPU, out_txt_file)) {
+            break;
+        }
     }
-    printf("%d\n", CPU->R[1]);
     fclose(out_txt_file);
 	free(CPU);
     return 0;
