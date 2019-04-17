@@ -48,23 +48,23 @@ int main(int argc, char** argv){
     out_txt_file = (FILE*) malloc(sizeof(FILE));
     out_txt_file = fopen(argv[1], "w");
     //print out data at every address
-    for (i = 0; i < 65536; i++) {
-        unsigned short int* mem = CPU->memory;
-        if (mem[i]){
-            fprintf(out_txt_file, "address: %d%d%d%d%d contents: 0x%X\n", 
-               (i / 10000) % 10 ,
-               (i / 1000) % 10,
-               (i / 100) % 10, 
-               (i / 10) % 10 , 
-               i % 10, mem[i]);
-        }
-    }
+//     for (i = 0; i < 65536; i++) {
+//         unsigned short int* mem = CPU->memory;
+//         if (mem[i]){
+//             fprintf(out_txt_file, "address: %d%d%d%d%d contents: 0x%X\n", 
+//                (i / 10000) % 10 ,
+//                (i / 1000) % 10,
+//                (i / 100) % 10, 
+//                (i / 10) % 10 , 
+//                i % 10, mem[i]);
+//         }
+//     }
     
     Reset(CPU);
-    ClearSignals(CPU);
-    while ((((CPU->PSR >> 15) % 2 == 0 && CPU->PC < 0x80FF) || ((CPU->PSR >> 15) % 2 == 1))) {
+    while ((((CPU->PSR >> 15) % 2 == 0 && CPU->PC < 0x0010) || ((CPU->PSR >> 15) % 2 == 1))) {
         UpdateMachineState(CPU, out_txt_file);
     }
+    printf("%d\n", CPU->R[1]);
     fclose(out_txt_file);
 	free(CPU);
     return 0;
